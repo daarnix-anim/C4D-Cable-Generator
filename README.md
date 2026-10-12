@@ -3,7 +3,7 @@
 [![Cinema 4D](https://img.shields.io/badge/Cinema%204D-2024%20%7C%202025%20%7C%202026-blue.svg)](https://www.maxon.net/cinema-4d)
 [![Python](https://img.shields.io/badge/Python-3.11-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status: Stable](https://img.shields.io/badge/Status-v1.0%20Stable-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-v0.9.1-brightgreen.svg)]()
 
 Интерактивный процедурный генератор динамических проводов, кабелей и эффектов передачи данных (MoGraph) для **Maxon Cinema 4D (2024 / 2025 / 2026)**.
 
