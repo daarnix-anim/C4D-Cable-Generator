@@ -50,6 +50,7 @@ IDC_SUBDIVS          = 1024
 IDC_PROFILE_SEG      = 1025
 IDC_GROWTH           = 1026
 IDC_SPHERE_DELAY     = 1027
+IDC_SPHERE_MODE      = 1028
 
 # Секция потоков данных
 IDC_GRP_STREAMS      = 1040
@@ -84,35 +85,35 @@ STREAM_COLORS = [
 DEFAULT_PRESETS = {
     "Стандартный кабель (2 потока)": {
         "wire_radius": 2.0, "sag": 50.0, "axis_mode": 0, "subdivs": 25, "profile_seg": 8,
-        "growth": 100.0, "sphere_delay": 20.0,
+        "growth": 100.0, "sphere_delay": 20.0, "sphere_mode": 0,
         "enable_streams": True, "stream_preset": 2,
         "s1_size": 1.5, "s1_dist": 30.0, "s1_speed": 35.0,
         "s2_size": 1.0, "s2_dist": 45.0, "s2_speed": -25.0
     },
     "Оптоволокно (Быстрый обмен)": {
         "wire_radius": 1.0, "sag": 25.0, "axis_mode": 0, "subdivs": 30, "profile_seg": 8,
-        "growth": 100.0, "sphere_delay": 20.0,
+        "growth": 100.0, "sphere_delay": 20.0, "sphere_mode": 0,
         "enable_streams": True, "stream_preset": 3,
         "s1_size": 0.8, "s1_dist": 15.0, "s1_speed": 80.0,
         "s2_size": 0.8, "s2_dist": 15.0, "s2_speed": -80.0
     },
     "Тяжелый провисающий кабель": {
         "wire_radius": 5.0, "sag": 140.0, "axis_mode": 0, "subdivs": 35, "profile_seg": 12,
-        "growth": 100.0, "sphere_delay": 20.0,
+        "growth": 100.0, "sphere_delay": 20.0, "sphere_mode": 0,
         "enable_streams": False, "stream_preset": 1,
         "s1_size": 2.0, "s1_dist": 50.0, "s1_speed": 20.0,
         "s2_size": 1.5, "s2_dist": 50.0, "s2_speed": -20.0
     },
     "Киберпанк магистраль (4 канала)": {
         "wire_radius": 3.0, "sag": 40.0, "axis_mode": 0, "subdivs": 30, "profile_seg": 10,
-        "growth": 100.0, "sphere_delay": 20.0,
+        "growth": 100.0, "sphere_delay": 20.0, "sphere_mode": 0,
         "enable_streams": True, "stream_preset": 4,
         "s1_size": 1.8, "s1_dist": 35.0, "s1_speed": 45.0,
         "s2_size": 1.2, "s2_dist": 40.0, "s2_speed": -35.0
     },
     "Прямой натянутый провод": {
         "wire_radius": 1.5, "sag": 0.0, "axis_mode": 0, "subdivs": 15, "profile_seg": 8,
-        "growth": 100.0, "sphere_delay": 20.0,
+        "growth": 100.0, "sphere_delay": 20.0, "sphere_mode": 0,
         "enable_streams": True, "stream_preset": 1,
         "s1_size": 1.2, "s1_dist": 25.0, "s1_speed": 40.0,
         "s2_size": 1.0, "s2_dist": 30.0, "s2_speed": -30.0
@@ -198,6 +199,7 @@ def read_rig_user_data(rig):
         "target_b": None,
         "growth": None,
         "sphere_delay": None,
+        "sphere_mode": 0,
         "radius": None,
         "sag": None,
         "axis": None,
@@ -287,7 +289,12 @@ def read_rig_user_data(rig):
                     elif any(k in name_l for k in ["объект б", "точка б", "конец"]):
                         data["target_b"] = val
                     elif "появлен" in name_l or "рост" in name_l or "growth" in name_l or "build" in name_l:
-                        data["growth"] = float(val)
+                        if "режим" in name_l:
+                            data["sphere_mode"] = int(val)
+                        else:
+                            data["growth"] = float(val)
+                    elif "режим" in name_l and ("появлен" in name_l or "сфер" in name_l or "mode" in name_l):
+                        data["sphere_mode"] = int(val)
                     elif "задержк" in name_l or "delay" in name_l:
                         data["sphere_delay"] = float(val)
                     elif "толщин" in name_l or ("радиус" in name_l and "сфер" not in name_l):
@@ -406,6 +413,7 @@ def main():
     subdivs      = ud["subdivs"] if ud["subdivs"] is not None else 25
     growth_val   = ud["growth"] if ud["growth"] is not None else 100.0
     delay_val    = ud["sphere_delay"] if ud["sphere_delay"] is not None else 20.0
+    sphere_mode  = ud.get("sphere_mode", 0)
 
     profile = None
     path = None
@@ -427,8 +435,13 @@ def main():
     g_ratio = max(0.0, min(1.0, growth_val / 100.0))
     d_ratio = max(0.0, min(0.8, delay_val / 100.0))
 
-    cable_finish_thresh = max(0.2, 1.0 - d_ratio * 0.5)
-    cable_target_growth = min(1.0, g_ratio / cable_finish_thresh) if cable_finish_thresh > 0 else 1.0
+    # Порог завершения прокладки кабеля (когда кабель достигает точки Б)
+    cable_finish_thresh = max(0.2, 1.0 - d_ratio)
+
+    if g_ratio <= cable_finish_thresh:
+        cable_target_growth = min(1.0, g_ratio / cable_finish_thresh) if cable_finish_thresh > 0 else 1.0
+    else:
+        cable_target_growth = 1.0
 
     curr_sw_growth = sweep[c4d.SWEEPOBJECT_GROWTH]
     if abs(curr_sw_growth - cable_target_growth) > 0.0005:
@@ -543,17 +556,6 @@ def main():
                 cloner[c4d.MGCLONER_VOLUMEINSTANCES_MODE] = c4d.MGCLONER_VOLUMEINSTANCES_MODE_RENDERINSTANCE
                 cloner_changed = True
 
-            # Управление размером сфер: радиус примитива Osphere
-            sphere = cloner.GetDown()
-            s_rad = s_data.get("radius")
-            if sphere and s_rad is not None and s_rad > 0:
-                if abs(sphere[c4d.PRIM_SPHERE_RAD] - s_rad) > 0.001:
-                    sphere[c4d.PRIM_SPHERE_RAD] = s_rad
-                    sphere.SetDirty(c4d.DIRTYFLAGS_DATA | c4d.DIRTYFLAGS_CACHE)
-                    sphere.Message(c4d.MSG_CHANGE)
-                    sphere.Message(c4d.MSG_UPDATE)
-                    cloner_changed = True
-
             # Скорость (%/сек)
             s_speed = s_data.get("speed")
             if s_speed is not None:
@@ -569,33 +571,76 @@ def main():
                     cloner[c4d.MG_SPLINE_STEP] = s_dist
                     cloner_changed = True
 
-            # Расчет появления сфер с учетом направления и задержки
             is_forward = (s_speed >= 0.0) if s_speed is not None else True
-            start_thresh = d_ratio * 0.5  # Порог выхода сфер из начальной точки
+            sphere = cloner.GetDown()
+            s_rad = s_data.get("radius") if s_data.get("radius") is not None else 1.5
 
-            if is_forward:
-                # Прямой поток (А -> Б)
-                if g_ratio <= start_thresh:
+            # Расчет активности потока, масштаба сфер и диапазона сплайна
+            if sphere_mode == 0:
+                # =========================================================
+                # РЕЖИМ 0 (ПО УМОЛЧАНИЮ): МАСШТАБ СФЕР 0 ➔ 100% В КОНЦЕ
+                # =========================================================
+                # Пока кабель строится (g_ratio <= cable_finish_thresh),
+                # сферы строго скрыты (масштаб 0).
+                # Как только кабель достиг конечной точки, сферы плавно
+                # увеличиваются от 0 до своего нормального размера.
+                if g_ratio <= cable_finish_thresh:
                     stream_active = False
-                    sp_start = 0.0
-                    sp_end = 0.0
+                    sphere_scale = 0.0
                 else:
                     stream_active = True
-                    sp_start = 0.0
-                    sp_end = min(1.0, (g_ratio - start_thresh) / max(0.001, (1.0 - start_thresh)))
+                    prog = (g_ratio - cable_finish_thresh) / max(0.001, (1.0 - cable_finish_thresh))
+                    prog = max(0.0, min(1.0, prog))
+                    # Плавная S-образная кривая (smoothstep)
+                    sphere_scale = prog * prog * (3.0 - 2.0 * prog)
+
+                sp_start = 0.0
+                sp_end = 1.0
+                should_loop = True
+
             else:
-                # Встречный поток (Б -> А)
-                if g_ratio < cable_finish_thresh:
-                    stream_active = False
-                    sp_start = 1.0
-                    sp_end = 1.0
+                # =========================================================
+                # РЕЖИМ 1: СФЕРЫ ТОЛЬКО ВНУТРИ ОТРОСШЕГО ПУТИ
+                # =========================================================
+                sphere_scale = 1.0
+                if not is_forward:
+                    # Встречные потоки (Б -> А) КАТЕГОРИЧЕСКИ НЕ ПОЯВЛЯЮТСЯ,
+                    # пока провод не дотянулся до точки Б!
+                    if g_ratio < cable_finish_thresh:
+                        stream_active = False
+                        sp_start = 0.0
+                        sp_end = 1.0
+                        should_loop = True
+                    else:
+                        stream_active = True
+                        sp_start = 0.0
+                        sp_end = 1.0
+                        should_loop = True
                 else:
-                    stream_active = True
-                    ret_prog = min(1.0, (g_ratio - cable_finish_thresh) / max(0.001, (1.0 - cable_finish_thresh)))
-                    sp_start = max(0.0, 1.0 - ret_prog)
-                    sp_end = 1.0
+                    # Прямой поток (А -> Б): идет строго за кончиком отросшего кабеля
+                    if cable_target_growth <= 0.01:
+                        stream_active = False
+                        sp_start = 0.0
+                        sp_end = 0.0
+                        should_loop = False
+                    else:
+                        stream_active = True
+                        sp_start = 0.0
+                        sp_end = cable_target_growth
+                        should_loop = (cable_target_growth >= 0.999)
 
-            if not stream_active:
+            # Управление радиусом примитива Osphere (масштабирование сфер)
+            if sphere and s_rad is not None and s_rad > 0:
+                target_rad = max(0.001, s_rad * sphere_scale) if stream_active else 0.001
+                if abs(sphere[c4d.PRIM_SPHERE_RAD] - target_rad) > 0.001:
+                    sphere[c4d.PRIM_SPHERE_RAD] = target_rad
+                    sphere.SetDirty(c4d.DIRTYFLAGS_DATA | c4d.DIRTYFLAGS_CACHE)
+                    sphere.Message(c4d.MSG_CHANGE)
+                    sphere.Message(c4d.MSG_UPDATE)
+                    cloner_changed = True
+
+            # Включение / отключение клонера
+            if not stream_active or sphere_scale <= 0.001:
                 if cloner[c4d.ID_BASEOBJECT_GENERATOR_FLAG] != False:
                     cloner[c4d.ID_BASEOBJECT_GENERATOR_FLAG] = False
                     cloner.SetEditorMode(c4d.MODE_OFF)
@@ -616,7 +661,6 @@ def main():
                     cloner[c4d.MG_SPLINE_END] = sp_end
                     cloner_changed = True
 
-                should_loop = (sp_start <= 0.001 and sp_end >= 0.999)
                 if cloner[c4d.MG_SPLINE_LOOP] != should_loop:
                     cloner[c4d.MG_SPLINE_LOOP] = should_loop
                     cloner_changed = True
@@ -943,9 +987,10 @@ def update_rig_solver_tag(rig):
                 inex_data.InsertObject(target_b_obj, 1)
             rig[id_inex] = inex_data
 
-        # 5. Проверяем наличие параметров Появление кабеля и Задержка сфер
+        # 5. Проверяем наличие параметров Появление кабеля, Задержка сфер и Режим сфер
         has_growth = False
         has_delay = False
+        has_smode = False
         if container:
             for desc_id, bc in container:
                 if not bc:
@@ -953,7 +998,12 @@ def update_rig_solver_tag(rig):
                 name = bc[c4d.DESC_NAME] or ""
                 name_l = name.lower()
                 if "появлен" in name_l or "рост" in name_l:
-                    has_growth = True
+                    if "режим" in name_l:
+                        has_smode = True
+                    else:
+                        has_growth = True
+                elif "режим" in name_l and ("появлен" in name_l or "сфер" in name_l):
+                    has_smode = True
                 elif "задержк" in name_l:
                     has_delay = True
 
@@ -984,6 +1034,19 @@ def update_rig_solver_tag(rig):
                 bc_d[c4d.DESC_PARENTGROUP] = id_grp_wire
             id_d = rig.AddUserData(bc_d)
             rig[id_d] = 20.0
+
+        if not has_smode:
+            bc_smode = c4d.GetCustomDataTypeDefault(c4d.DTYPE_LONG)
+            bc_smode[c4d.DESC_NAME] = "Режим появления сфер"
+            bc_smode[c4d.DESC_SHORT_NAME] = "Режим сфер"
+            cycle_smode = c4d.BaseContainer()
+            cycle_smode.SetString(0, "Масштаб сфер 0➔100% (после кабеля)")
+            cycle_smode.SetString(1, "Сферы по пути (только вперед за кончиком)")
+            bc_smode[c4d.DESC_CYCLE] = cycle_smode
+            if id_grp_wire:
+                bc_smode[c4d.DESC_PARENTGROUP] = id_grp_wire
+            id_smode = rig.AddUserData(bc_smode)
+            rig[id_smode] = 0
     except Exception:
         pass
 
@@ -1036,7 +1099,12 @@ def apply_preset_to_rig(rig, preset_data):
                         rig[desc_id] = float(preset_data.get("s2_speed", -25.0))
                 else:
                     if "появлен" in name_l or "рост" in name_l:
-                        rig[desc_id] = float(preset_data.get("growth", 100.0))
+                        if "режим" in name_l:
+                            rig[desc_id] = int(preset_data.get("sphere_mode", 0))
+                        else:
+                            rig[desc_id] = float(preset_data.get("growth", 100.0))
+                    elif "режим" in name_l and ("появлен" in name_l or "сфер" in name_l):
+                        rig[desc_id] = int(preset_data.get("sphere_mode", 0))
                     elif "задержк" in name_l:
                         rig[desc_id] = float(preset_data.get("sphere_delay", 20.0))
                     elif "толщин" in name_l or "радиус" in name_l:
@@ -1060,7 +1128,7 @@ def apply_preset_to_rig(rig, preset_data):
 
 
 def create_wire_rig(doc, targets=None, target_a=None, target_b=None, wire_radius=2.0, sag=50.0, axis_mode=0, subdivs=25, profile_seg=8,
-                    growth=100.0, sphere_delay=20.0,
+                    growth=100.0, sphere_delay=20.0, sphere_mode=0,
                     enable_streams=True, stream_preset=2,
                     s1_size=1.5, s1_dist=30.0, s1_speed=35.0,
                     s2_size=1.0, s2_dist=45.0, s2_speed=-25.0):
@@ -1254,6 +1322,18 @@ def create_wire_rig(doc, targets=None, target_a=None, target_b=None, wire_radius
     bc_sdelay[c4d.DESC_PARENTGROUP] = id_grp_wire
     id_sdelay = rig_null.AddUserData(bc_sdelay)
     rig_null[id_sdelay] = float(sphere_delay)
+
+    # Режим появления сфер
+    bc_smode = c4d.GetCustomDataTypeDefault(c4d.DTYPE_LONG)
+    bc_smode[c4d.DESC_NAME] = "Режим появления сфер"
+    bc_smode[c4d.DESC_SHORT_NAME] = "Режим сфер"
+    cycle_smode = c4d.BaseContainer()
+    cycle_smode.SetString(0, "Масштаб сфер 0➔100% (после кабеля)")
+    cycle_smode.SetString(1, "Сферы по пути (только вперед за кончиком)")
+    bc_smode[c4d.DESC_CYCLE] = cycle_smode
+    bc_smode[c4d.DESC_PARENTGROUP] = id_grp_wire
+    id_smode = rig_null.AddUserData(bc_smode)
+    rig_null[id_smode] = int(sphere_mode)
 
     # 4. Потоки данных (Cloners MoGraph)
     if enable_streams and stream_preset > 0:
@@ -1470,6 +1550,11 @@ class CableGeneratorDialog(gui.GeDialog):
         self.AddStaticText(0, c4d.BFH_LEFT, 0, 0, "Задержка сфер данных (%):", c4d.BORDER_NONE)
         self.AddEditSlider(IDC_SPHERE_DELAY, c4d.BFH_SCALEFIT)
 
+        self.AddStaticText(0, c4d.BFH_LEFT, 0, 0, "Режим появления сфер:", c4d.BORDER_NONE)
+        self.AddComboBox(IDC_SPHERE_MODE, c4d.BFH_SCALEFIT)
+        self.AddChild(IDC_SPHERE_MODE, 0, "Масштаб сфер 0➔100% (после кабеля)")
+        self.AddChild(IDC_SPHERE_MODE, 1, "Сферы по пути (только вперед за кончиком)")
+
         self.GroupEnd()
 
         # -------------------------------------------------------------
@@ -1548,6 +1633,7 @@ class CableGeneratorDialog(gui.GeDialog):
         self.SetFloat(IDC_PROFILE_SEG, float(p.get("profile_seg", 8)))
         self.SetFloat(IDC_GROWTH, float(p.get("growth", 100.0)))
         self.SetFloat(IDC_SPHERE_DELAY, float(p.get("sphere_delay", 20.0)))
+        self.SetInt32(IDC_SPHERE_MODE, int(p.get("sphere_mode", 0)))
 
         self.SetBool(IDC_ENABLE_STREAMS, p.get("enable_streams", True))
         self.SetInt32(IDC_STREAM_PRESET, p.get("stream_preset", 2))
@@ -1571,6 +1657,7 @@ class CableGeneratorDialog(gui.GeDialog):
             "profile_seg": int(self.GetFloat(IDC_PROFILE_SEG)),
             "growth": self.GetFloat(IDC_GROWTH),
             "sphere_delay": self.GetFloat(IDC_SPHERE_DELAY),
+            "sphere_mode": self.GetInt32(IDC_SPHERE_MODE),
             "enable_streams": self.GetBool(IDC_ENABLE_STREAMS),
             "stream_preset": self.GetInt32(IDC_STREAM_PRESET),
             "s1_size": self.GetFloat(IDC_S1_SIZE),
@@ -1595,6 +1682,7 @@ class CableGeneratorDialog(gui.GeDialog):
         self.SetFloat(IDC_PROFILE_SEG, 8.0, min=3.0, max=32.0, step=1.0)
         self.SetFloat(IDC_GROWTH, 100.0, min=0.0, max=100.0, step=1.0)
         self.SetFloat(IDC_SPHERE_DELAY, 20.0, min=0.0, max=80.0, step=1.0)
+        self.SetInt32(IDC_SPHERE_MODE, 0)
 
         self.SetBool(IDC_ENABLE_STREAMS, True)
         self.SetInt32(IDC_STREAM_PRESET, 2)
@@ -1720,6 +1808,7 @@ class CableGeneratorDialog(gui.GeDialog):
                 profile_seg=int(self.GetFloat(IDC_PROFILE_SEG)),
                 growth=self.GetFloat(IDC_GROWTH),
                 sphere_delay=self.GetFloat(IDC_SPHERE_DELAY),
+                sphere_mode=self.GetInt32(IDC_SPHERE_MODE),
                 enable_streams=self.GetBool(IDC_ENABLE_STREAMS),
                 stream_preset=self.GetInt32(IDC_STREAM_PRESET),
                 s1_size=self.GetFloat(IDC_S1_SIZE),
